@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="twingate-panel">
+  <schema id="org.gnome.shell.extensions.twingate-panel" path="/org/gnome/shell/extensions/twingate-panel/">
+    <key name="poll-interval-seconds" type="i">
+      <default>5</default>
+      <range min="1" max="60"/>
+      <summary>Poll interval</summary>
+      <description>How often, in seconds, status and resources are refreshed.</description>
+    </key>
+    <key name="notifications-enabled" type="b">
+      <default>true</default>
+      <summary>Enable connection notifications</summary>
+      <description>Send a native notification when the connection state actually changes (connected/disconnected/error). Note: GNOME's own Do Not Disturb setting already suppresses notification banners system-wide regardless of this setting.</description>
+    </key>
+    <key name="ping-enabled" type="b">
+      <default>true</default>
+      <summary>Enable resource reachability pings</summary>
+      <description>Periodically ping each authorized resource's address to show a reachability dot. Disable to skip pinging entirely.</description>
+    </key>
+    <key name="ping-interval-seconds" type="i">
+      <default>5</default>
+      <range min="1" max="300"/>
+      <summary>Ping interval</summary>
+      <description>How often, in seconds, resource reachability is re-checked via ping. Independent of the status poll interval.</description>
+    </key>
+    <key name="auth-auto-open" type="b">
+      <default>true</default>
+      <summary>Auto-open sign-in URL</summary>
+      <description>When Twingate enters the authenticating state, automatically open the sign-in URL in your default browser. The URL is opened once per authentication session.</description>
+    </key>
+  </schema>
+</schemalist>

@@ -1,0 +1,70 @@
+.twingate-header-box {
+    spacing: 8px;
+    padding: 4px 8px;
+}
+
+.twingate-network-title {
+    color: #ffffff;
+    font-size: 1em;
+}
+
+.twingate-network-title-connected {
+    font-weight: bold;
+}
+
+.twingate-settings-button {
+    border-radius: 6px;
+    padding: 4px;
+}
+
+.twingate-settings-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.twingate-header-icon {
+    color: #ffffff;
+}
+
+.twingate-status-dot {
+    /* size comes from DOT_SIZE in JS, keep these matching if you change it */
+    border-radius: 3.5px;
+}
+
+.twingate-dot-pending {
+    background-color: #5e5c64;
+}
+
+.twingate-dot-reachable {
+    background-color: #33d17a;
+}
+
+.twingate-dot-unreachable {
+    background-color: #c01c28;
+}
+
+.twingate-resources-header {
+    color: #ffffff;
+}
+
+.twingate-search-entry {
+    margin: 2px 8px;
+    padding: 2px 8px;
+    font-size: 0.85em;
+    min-height: 0;
+}
+
+.twingate-resource-box {
+    spacing: 8px;
+}
+
+.twingate-resource-label {
+    color: #ffffff;
+    font-size: 0.85em;
+}
+
+.twingate-resource-empty {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.85em;
+    font-style: italic;
+    padding: 2px 8px;
+}

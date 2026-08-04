@@ -1,0 +1,12 @@
+{
+  "description": "Control the Twingate VPN client (connect/disconnect, pause/resume, sign-in, accounts, resources) from the GNOME top panel.",
+  "name": "Twingate Panel",
+  "settings-schema": "org.gnome.shell.extensions.twingate-panel",
+  "shell-version": [
+    "50"
+  ],
+  "url": "https://github.com/mtharpe/twingate-panel",
+  "uuid": "twingate-panel@mtharpe",
+  "version": 7,
+  "version-name": "1.1.0"
+}
