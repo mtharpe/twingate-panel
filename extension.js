@@ -167,7 +167,11 @@ function parseNetworkNameFromAccounts(accounts) {
   return (current ?? accounts[0]).network;
 }
 
-const VALID_ADDRESS_RE = /^[A-Za-z0-9][A-Za-z0-9.:_-]*$/;
+const VALID_ADDRESS_RE = /^[*A-Za-z0-9][*A-Za-z0-9.:/_-]*$/;
+
+function isPingable(address) {
+  return !address.includes("*") && !address.includes("/");
+}
 
 function parseResources(stdout) {
   const lines = (stdout ?? "")
@@ -330,6 +334,7 @@ const Indicator = GObject.registerClass(
     _pingAllResources(generation) {
       for (const { address } of this._allResources) {
         if (generation !== this._resourceGeneration) return;
+        if (!isPingable(address)) continue;
         pingAddress(address, this._cancellable)
           .then((reachable) => {
             if (generation !== this._resourceGeneration) return;
@@ -580,13 +585,14 @@ const Indicator = GObject.registerClass(
               ? "twingate-dot-unreachable"
               : "twingate-dot-pending";
         const pingDot = createDot(pingClass);
-        pingDot.visible = pingEnabled;
+        const showDot = pingEnabled && isPingable(address);
+        pingDot.visible = showDot;
         box.add_child(pingDot);
 
         item.add_child(box);
         this._resourcesSection.addMenuItem(item);
 
-        if (pingEnabled) this._resourceDots.set(address, pingDot);
+        if (showDot) this._resourceDots.set(address, pingDot);
       }
     }
 
