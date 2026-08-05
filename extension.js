@@ -155,13 +155,16 @@ function parseAccounts(stdout) {
       email: fields[0],
       network: fields[1] ?? "",
       url: fields[2] ?? "",
+      current: fields[3] === "*",
     });
   }
   return rows;
 }
 
 function parseNetworkNameFromAccounts(accounts) {
-  return accounts.length > 0 ? accounts[0].network : null;
+  if (accounts.length === 0) return null;
+  const current = accounts.find((a) => a.current);
+  return (current ?? accounts[0]).network;
 }
 
 const VALID_ADDRESS_RE = /^[A-Za-z0-9][A-Za-z0-9.:_-]*$/;
@@ -601,6 +604,7 @@ const Indicator = GObject.registerClass(
             ? `${acct.email}  ·  ${acct.network}`
             : acct.email;
           const item = new PopupMenu.PopupMenuItem(label);
+          if (acct.current) item.setOrnament(PopupMenu.Ornament.DOT);
           item.connect("activate", () => {
             this.menu.close();
             this._switchAccount(acct.email);
@@ -633,11 +637,11 @@ const Indicator = GObject.registerClass(
       else this._runStop();
     }
 
-    async _runPkexec(args) {
+    async _runTwingate(args) {
       if (this._busy) return;
       this._busy = true;
       try {
-        await runCommand(["pkexec", TWINGATE_BIN, ...args], this._cancellable);
+        await runCommand([TWINGATE_BIN, ...args], this._cancellable);
       } catch (e) {
         if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
       } finally {
@@ -647,33 +651,40 @@ const Indicator = GObject.registerClass(
     }
 
     _runStart() {
-      return this._runPkexec(["start"]);
+      return this._runTwingate(["start"]);
     }
 
     _runStop() {
-      return this._runPkexec(["stop"]);
+      return this._runTwingate(["stop"]);
     }
 
     async _runReconnect() {
       if (this._busy) return;
       this._busy = true;
       try {
-        if (this._currentToken === "online") {
-          await runCommand(
-            [
-              "pkexec",
-              "sh",
-              "-c",
-              `${TWINGATE_BIN} disconnect && ${TWINGATE_BIN} connect`,
-            ],
-            this._cancellable,
-          );
-        } else {
-          await runCommand(
-            ["pkexec", TWINGATE_BIN, "connect"],
-            this._cancellable,
-          );
-        }
+        if (this._currentToken === "online")
+          await runCommand([TWINGATE_BIN, "disconnect"], this._cancellable);
+        await runCommand([TWINGATE_BIN, "connect"], this._cancellable);
+      } catch (e) {
+        if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
+      } finally {
+        this._busy = false;
+      }
+      this._scheduleQuickRefreshes();
+    }
+
+    async _runTwingateConfirming(twingateArgs, positionalArgs = []) {
+      if (this._busy) return;
+      this._busy = true;
+      try {
+        const placeholders = positionalArgs
+          .map((_, i) => `"$${i + 1}"`)
+          .join(" ");
+        const script = `yes | ${TWINGATE_BIN} ${twingateArgs.join(" ")} ${placeholders}`.trim();
+        await runCommand(
+          ["sh", "-c", script, "_", ...positionalArgs],
+          this._cancellable,
+        );
       } catch (e) {
         if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
       } finally {
@@ -683,12 +694,12 @@ const Indicator = GObject.registerClass(
     }
 
     async _switchAccount(email) {
-      await this._runPkexec(["account", "switch", email]);
+      await this._runTwingateConfirming(["-d", "account", "switch"], [email]);
       this._refreshAccounts();
     }
 
     async _logoutAccount() {
-      await this._runPkexec(["account", "logout"]);
+      await this._runTwingateConfirming(["-d", "account", "logout"]);
       this._refreshAccounts();
     }
 
