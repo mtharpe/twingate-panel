@@ -35,6 +35,8 @@ const TERMINAL_CANDIDATES = [
 const STATUS_INFO = {
   "not-running": { label: "Not running", connected: false, dotColor: "#9a9996" },
   offline: { label: "Offline", connected: false, dotColor: "#9a9996" },
+  // `twingate disconnect` pauses the session; the daemon keeps running
+  disconnected: { label: "Disconnected", connected: false, dotColor: "#9a9996" },
   online: { label: "Online", connected: true, dotColor: "#33d17a" },
   connecting: { label: "Connecting…", connected: false, dotColor: "#f5c211" },
   authenticating: {
@@ -49,8 +51,15 @@ const NOTIFY_CATEGORY = {
   online: "connected",
   "not-running": "disconnected",
   offline: "disconnected",
+  disconnected: "disconnected",
   unknown: "error",
 };
+
+// A new state must hold this long before it's announced, so the steps a restart passes
+// through (not running, authenticating, online) don't each pop a banner
+const NOTIFY_SETTLE_SECONDS = 10;
+// No banners for state changes within this long of an action started from the panel
+const NOTIFY_QUIET_AFTER_ACTION_US = 20 * GLib.USEC_PER_SEC;
 
 const PING_CLASSES = [
   "twingate-dot-pending",
@@ -286,6 +295,8 @@ const Indicator = GObject.registerClass(
       this._searchToggledOn = false;
       this._pingStatus = new Map();
       this._previousCategory = null;
+      this._pendingNotify = null;
+      this._quietUntil = 0;
       this._connected = false;
       this._authUrl = null;
       this._lastAutoOpenedSessionId = null;
@@ -560,7 +571,8 @@ const Indicator = GObject.registerClass(
       this._switchItem.setToggleState(info.connected);
       this._suppressToggle = false;
 
-      const canReconnect = token === "online" || token === "offline";
+      const canReconnect =
+        token === "online" || token === "offline" || token === "disconnected";
       this._reconnectItem.visible = canReconnect;
     }
 
@@ -703,6 +715,7 @@ const Indicator = GObject.registerClass(
     async _runArgv(argv) {
       if (this._busy) return;
       this._busy = true;
+      this._markUserAction();
       try {
         await runCommand(argv, this._cancellable);
       } catch (e) {
@@ -724,9 +737,13 @@ const Indicator = GObject.registerClass(
       return helper ? ["pkexec", helper, ...args] : null;
     }
 
-    _runStart() {
+    _helperConnectArgv() {
       const current = this._accounts.find((a) => a.current);
-      const argv = this._helperArgv(current ? ["connect", current.email] : ["connect"]);
+      return this._helperArgv(current ? ["connect", current.email] : ["connect"]);
+    }
+
+    _runStart() {
+      const argv = this._helperConnectArgv();
       return argv ? this._runArgv(argv) : this._runTwingate(["start"]);
     }
 
@@ -738,10 +755,18 @@ const Indicator = GObject.registerClass(
     async _runReconnect() {
       if (this._busy) return;
       this._busy = true;
+      this._markUserAction();
       try {
-        if (this._currentToken === "online")
-          await runCommand([this._bin, "disconnect"], this._cancellable);
-        await runCommand([this._bin, "connect"], this._cancellable);
+        const off = this._helperArgv(["off"]);
+        if (off) {
+          // Without root `connect` can't resume a paused session, so cycle through the helper
+          await runCommand(off, this._cancellable);
+          await runCommand(this._helperConnectArgv(), this._cancellable);
+        } else {
+          if (this._currentToken === "online")
+            await runCommand([this._bin, "disconnect"], this._cancellable);
+          await runCommand([this._bin, "connect"], this._cancellable);
+        }
       } catch (e) {
         if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
       } finally {
@@ -753,6 +778,7 @@ const Indicator = GObject.registerClass(
     async _runTwingateConfirming(twingateArgs, positionalArgs = []) {
       if (this._busy) return;
       this._busy = true;
+      this._markUserAction();
       try {
         const placeholders = positionalArgs
           .map((_, i) => `"$${i + 1}"`)
@@ -803,7 +829,13 @@ const Indicator = GObject.registerClass(
         );
     }
 
+    // Actions started here change the state on purpose; the result shows in the panel already
+    _markUserAction() {
+      this._quietUntil = GLib.get_monotonic_time() + NOTIFY_QUIET_AFTER_ACTION_US;
+    }
+
     _scheduleQuickRefreshes() {
+      this._markUserAction();
       for (const delay of [2, 5]) {
         const id = GLib.timeout_add_seconds(
           GLib.PRIORITY_DEFAULT,
@@ -863,24 +895,52 @@ const Indicator = GObject.registerClass(
 
     _maybeNotifyStateChange(token) {
       const category = NOTIFY_CATEGORY[token] ?? null;
-      if (
-        category &&
-        this._previousCategory !== null &&
-        category !== this._previousCategory &&
-        this._settings.get_boolean("notifications-enabled")
-      ) {
-        const network = this._networkNameLabel.text || "Twingate";
-        if (category === "connected")
-          Main.notify("Twingate", `Connected to ${network}`);
-        else if (category === "disconnected")
-          Main.notify("Twingate", "Disconnected");
-        else if (category === "error")
-          Main.notifyError(
-            "Twingate",
-            "Something went wrong — check the connection status.",
-          );
+      if (!category) return;
+      if (this._previousCategory === null) {
+        this._previousCategory = category;
+        return;
       }
-      if (category) this._previousCategory = category;
+      if (category === this._previousCategory) {
+        this._cancelPendingNotify();
+        return;
+      }
+      if (this._pendingNotify?.category === category) return;
+
+      this._cancelPendingNotify();
+      const id = GLib.timeout_add_seconds(
+        GLib.PRIORITY_DEFAULT,
+        NOTIFY_SETTLE_SECONDS,
+        () => {
+          this._pendingNotify = null;
+          this._previousCategory = category;
+          if (
+            GLib.get_monotonic_time() >= this._quietUntil &&
+            this._settings.get_boolean("notifications-enabled")
+          )
+            this._notifyState(category);
+          return GLib.SOURCE_REMOVE;
+        },
+      );
+      this._pendingNotify = { category, id };
+    }
+
+    _cancelPendingNotify() {
+      if (!this._pendingNotify) return;
+      GLib.Source.remove(this._pendingNotify.id);
+      this._pendingNotify = null;
+    }
+
+    _notifyState(category) {
+      const network = this._networkNameLabel.text || "Twingate";
+      if (category === "connected")
+        Main.notify("Twingate", `Connected to ${network}`);
+      else if (category === "disconnected")
+        Main.notify("Twingate", "Disconnected");
+      else if (category === "error")
+        Main.notifyError(
+          "Twingate",
+          "Something went wrong — check the connection status.",
+        );
     }
 
     _openAuthUrl() {
@@ -942,6 +1002,7 @@ const Indicator = GObject.registerClass(
       }
       for (const id of this._pendingRefreshIds) GLib.Source.remove(id);
       this._pendingRefreshIds.clear();
+      this._cancelPendingNotify();
       this._resourceDots.clear();
 
       if (this._menuOpenStateId) {

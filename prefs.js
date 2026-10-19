@@ -29,7 +29,7 @@ export default class TwingatePanelPreferences extends ExtensionPreferences {
 
         const notificationsRow = new Adw.SwitchRow({
             title: 'Enable notifications',
-            subtitle: 'Show a notification when the connection state changes (connected/disconnected/error).',
+            subtitle: 'Announce connection changes (connected/disconnected/error) that last 10 seconds. Changes you make from the panel stay quiet.',
         });
         settings.bind('notifications-enabled', notificationsRow, 'active', Gio.SettingsBindFlags.DEFAULT);
         group.add(notificationsRow);

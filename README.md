@@ -41,7 +41,7 @@ Open with the gear icon in the panel menu or via `gnome-extensions prefs twingat
 
 - **Poll interval** — how often to refresh Twingate status
 - **Ping enabled / interval** — background reachability checks for each resource
-- **Notifications** — desktop notifications on connect / disconnect / error
+- **Notifications** — desktop notifications on connect / disconnect / error, only once a change has lasted 10 seconds and not for changes you start from the panel
 - **Auto-open auth URL** — automatically open the Twingate sign-in URL in your browser when authentication is required
 - **CLI path** — where the `twingate` command is; empty checks `/usr/bin`, `/usr/local/bin`, then `PATH`
 - **Privileged helper** — optional; see below
