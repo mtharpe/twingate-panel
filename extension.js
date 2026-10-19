@@ -119,6 +119,8 @@ function parseStatusToken(stdout) {
       .split("\n")
       .map((l) => l.trim())
       .find((l) => l.length > 0) ?? "";
+  // While signing in, some CLI versions print only the sign-in URL
+  if (/^https?:\/\//.test(firstLine)) return "authenticating";
   const token = firstLine.toLowerCase().split(/\s+/)[0] ?? "";
   return token in STATUS_INFO ? token : "unknown";
 }
