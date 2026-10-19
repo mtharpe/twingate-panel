@@ -7,7 +7,7 @@ Fork of [urhend/twingate-panel](https://github.com/urhend/twingate-panel).
 ## Requirements
 
 - GNOME Shell 50 or newer
-- Twingate CLI installed at `/usr/bin/twingate` (see [Twingate downloads](https://www.twingate.com/download))
+- Twingate CLI installed at `/usr/bin/twingate` or `/usr/local/bin/twingate`, or set its path in Preferences (see [Twingate downloads](https://www.twingate.com/download))
 
 That's it. The extension talks to the Twingate daemon through its user-accessible socket (`/run/twingate/auth.sock`) — no `sudo`, no `pkexec`, no polkit rule, no group membership required.
 
@@ -43,6 +43,27 @@ Open with the gear icon in the panel menu or via `gnome-extensions prefs twingat
 - **Ping enabled / interval** — background reachability checks for each resource
 - **Notifications** — desktop notifications on connect / disconnect / error
 - **Auto-open auth URL** — automatically open the Twingate sign-in URL in your browser when authentication is required
+- **CLI path** — where the `twingate` command is; empty checks `/usr/bin`, `/usr/local/bin`, then `PATH`
+- **Privileged helper** — optional; see below
+
+### Privileged helper (optional)
+
+On systems where the Twingate CLI can't get root for itself, such as image-based distros
+without `sudo`, point **Privileged helper** at a root-owned script. The panel then runs it with
+`pkexec` for these actions instead of calling `twingate` directly:
+
+| Panel action | Helper call |
+|---|---|
+| Toggle on | `connect` (or `connect <email>` when the active account is known) |
+| Toggle off | `off` |
+| Pick an account | `connect <email>` |
+| Add account… | `add` (in a terminal) |
+
+Pair it with a polkit rule allowing `org.freedesktop.policykit.exec` for that one program if
+you don't want a password prompt. Leave the setting empty to keep the default behaviour.
+
+The active account is taken from the CLI's `account list` when it marks one, otherwise from
+the client's active profile in `/var/lib/twingate/profiles`.
 
 ## License
 

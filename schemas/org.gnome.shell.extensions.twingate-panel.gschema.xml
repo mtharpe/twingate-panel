@@ -28,5 +28,15 @@
       <summary>Auto-open sign-in URL</summary>
       <description>When Twingate enters the authenticating state, automatically open the sign-in URL in your default browser. The URL is opened once per authentication session.</description>
     </key>
+    <key name="twingate-path" type="s">
+      <default>""</default>
+      <summary>Twingate CLI path</summary>
+      <description>Path to the twingate command. Empty finds it in /usr/bin, /usr/local/bin or PATH.</description>
+    </key>
+    <key name="privileged-helper" type="s">
+      <default>""</default>
+      <summary>Privileged helper</summary>
+      <description>Optional root helper run with pkexec for connect, disconnect, account switch and add, for systems where the twingate CLI can't get root itself (for example, no sudo). It is called as `connect [account]`, `off` or `add`. Empty runs the twingate CLI directly.</description>
+    </key>
   </schema>
 </schemalist>

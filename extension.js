@@ -20,7 +20,10 @@ import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
 Gio._promisify(Gio.Subprocess.prototype, "communicate_utf8_async");
 
-const TWINGATE_BIN = "/usr/bin/twingate";
+// Where the Twingate packages put the CLI; /usr/local for hosts with a read-only /usr
+const TWINGATE_CANDIDATES = ["/usr/bin/twingate", "/usr/local/bin/twingate"];
+// The client keeps one directory per signed-in account here; `default` names the active one
+const TWINGATE_PROFILES_DIR = "/var/lib/twingate/profiles";
 const TERMINAL_CANDIDATES = [
   "ptyxis",
   "kgx",
@@ -161,6 +164,51 @@ function parseAccounts(stdout) {
   return rows;
 }
 
+function resolveTwingateBin(settings) {
+  const configured = settings.get_string("twingate-path").trim();
+  if (configured) return configured;
+  for (const path of TWINGATE_CANDIDATES) {
+    if (GLib.file_test(path, GLib.FileTest.IS_EXECUTABLE)) return path;
+  }
+  return GLib.find_program_in_path("twingate") ?? TWINGATE_CANDIDATES[0];
+}
+
+function readTextFile(path) {
+  try {
+    const [ok, bytes] = GLib.file_get_contents(path);
+    return ok ? new TextDecoder().decode(bytes) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Clients whose `account list` has no current-account column: read the active profile instead
+function readActiveProfile() {
+  const id = readTextFile(`${TWINGATE_PROFILES_DIR}/default`)?.trim();
+  if (!id || id.includes("/")) return null;
+  try {
+    const info = JSON.parse(
+      readTextFile(`${TWINGATE_PROFILES_DIR}/${id}/info.json`) ?? "",
+    );
+    return { email: info.email ?? "", networkSlug: info.network_slug ?? "" };
+  } catch (e) {
+    return null;
+  }
+}
+
+function markActiveAccount(accounts) {
+  if (accounts.some((a) => a.current)) return;
+  const active = readActiveProfile();
+  if (!active?.email) return;
+  for (const acct of accounts) {
+    // The NETWORK URL column is <slug>.twingate.com
+    const slug = acct.url.split(".")[0];
+    acct.current =
+      acct.email === active.email &&
+      (!active.networkSlug || !slug || slug === active.networkSlug);
+  }
+}
+
 function parseNetworkNameFromAccounts(accounts) {
   if (accounts.length === 0) return null;
   const current = accounts.find((a) => a.current);
@@ -243,6 +291,7 @@ const Indicator = GObject.registerClass(
       this._lastAutoOpenedSessionId = null;
       this._accounts = [];
       this._currentToken = "unknown";
+      this._bin = resolveTwingateBin(settings);
 
       const iconPath = GLib.build_filenamev([
         extensionPath,
@@ -292,6 +341,14 @@ const Indicator = GObject.registerClass(
         "changed::ping-interval-seconds",
         () => {
           this._startPingPolling();
+        },
+      );
+      this._binChangedId = this._settings.connect(
+        "changed::twingate-path",
+        () => {
+          this._bin = resolveTwingateBin(this._settings);
+          this._refresh();
+          this._refreshAccounts();
         },
       );
     }
@@ -643,11 +700,11 @@ const Indicator = GObject.registerClass(
       else this._runStop();
     }
 
-    async _runTwingate(args) {
+    async _runArgv(argv) {
       if (this._busy) return;
       this._busy = true;
       try {
-        await runCommand([TWINGATE_BIN, ...args], this._cancellable);
+        await runCommand(argv, this._cancellable);
       } catch (e) {
         if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
       } finally {
@@ -656,12 +713,26 @@ const Indicator = GObject.registerClass(
       this._scheduleQuickRefreshes();
     }
 
+    _runTwingate(args) {
+      return this._runArgv([this._bin, ...args]);
+    }
+
+    // Optional root helper run through pkexec, for hosts where the CLI can't get root itself
+    // (no sudo). Interface: `connect [account]`, `off`, `add`. Empty setting = plain CLI.
+    _helperArgv(args) {
+      const helper = this._settings.get_string("privileged-helper").trim();
+      return helper ? ["pkexec", helper, ...args] : null;
+    }
+
     _runStart() {
-      return this._runTwingate(["start"]);
+      const current = this._accounts.find((a) => a.current);
+      const argv = this._helperArgv(current ? ["connect", current.email] : ["connect"]);
+      return argv ? this._runArgv(argv) : this._runTwingate(["start"]);
     }
 
     _runStop() {
-      return this._runTwingate(["stop"]);
+      const argv = this._helperArgv(["off"]);
+      return argv ? this._runArgv(argv) : this._runTwingate(["stop"]);
     }
 
     async _runReconnect() {
@@ -669,8 +740,8 @@ const Indicator = GObject.registerClass(
       this._busy = true;
       try {
         if (this._currentToken === "online")
-          await runCommand([TWINGATE_BIN, "disconnect"], this._cancellable);
-        await runCommand([TWINGATE_BIN, "connect"], this._cancellable);
+          await runCommand([this._bin, "disconnect"], this._cancellable);
+        await runCommand([this._bin, "connect"], this._cancellable);
       } catch (e) {
         if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
       } finally {
@@ -686,9 +757,10 @@ const Indicator = GObject.registerClass(
         const placeholders = positionalArgs
           .map((_, i) => `"$${i + 1}"`)
           .join(" ");
-        const script = `yes | ${TWINGATE_BIN} ${twingateArgs.join(" ")} ${placeholders}`.trim();
+        // The CLI path goes in as $0 so it's never parsed as shell code
+        const script = `yes | "$0" ${twingateArgs.join(" ")} ${placeholders}`.trim();
         await runCommand(
-          ["sh", "-c", script, "_", ...positionalArgs],
+          ["sh", "-c", script, this._bin, ...positionalArgs],
           this._cancellable,
         );
       } catch (e) {
@@ -700,7 +772,9 @@ const Indicator = GObject.registerClass(
     }
 
     async _switchAccount(email) {
-      await this._runTwingateConfirming(["-d", "account", "switch"], [email]);
+      const argv = this._helperArgv(["connect", email]);
+      if (argv) await this._runArgv(argv);
+      else await this._runTwingateConfirming(["-d", "account", "switch"], [email]);
       this._refreshAccounts();
     }
 
@@ -718,7 +792,10 @@ const Indicator = GObject.registerClass(
         );
         return;
       }
-      const argv = terminalArgv(term, [TWINGATE_BIN, "account", "add"]);
+      const argv = terminalArgv(
+        term,
+        this._helperArgv(["add"]) ?? [this._bin, "account", "add"],
+      );
       if (!spawnDetached(argv))
         Main.notifyError(
           "Twingate",
@@ -746,7 +823,7 @@ const Indicator = GObject.registerClass(
       let result;
       try {
         result = await runCommand(
-          [TWINGATE_BIN, "-d", "status"],
+          [this._bin, "-d", "status"],
           this._cancellable,
         );
       } catch (e) {
@@ -808,14 +885,19 @@ const Indicator = GObject.registerClass(
 
     _openAuthUrl() {
       if (!this._authUrl) return;
-      runCommand(["xdg-open", this._authUrl], this._cancellable).catch(() => {});
+      // GIO's default handler, so it works without xdg-utils (e.g. image-based distros)
+      try {
+        Gio.AppInfo.launch_default_for_uri(this._authUrl, null);
+      } catch (e) {
+        runCommand(["xdg-open", this._authUrl], this._cancellable).catch(() => {});
+      }
     }
 
     async _refreshAccounts() {
       let result;
       try {
         result = await runCommand(
-          [TWINGATE_BIN, "-d", "account", "list"],
+          [this._bin, "-d", "account", "list"],
           this._cancellable,
         );
       } catch (e) {
@@ -823,7 +905,12 @@ const Indicator = GObject.registerClass(
         return;
       }
       this._accounts = parseAccounts(result.stdout);
-      const name = parseNetworkNameFromAccounts(this._accounts);
+      markActiveAccount(this._accounts);
+      // An active profile that isn't signed in yet isn't listed; name its network, not the first account's
+      const name = this._accounts.some((a) => a.current)
+        ? parseNetworkNameFromAccounts(this._accounts)
+        : (readActiveProfile()?.networkSlug ||
+          parseNetworkNameFromAccounts(this._accounts));
       this._networkNameLabel.text = name ?? "Twingate";
       this._renderAccountsMenu();
     }
@@ -832,7 +919,7 @@ const Indicator = GObject.registerClass(
       let result;
       try {
         result = await runCommand(
-          [TWINGATE_BIN, "-d", "resources"],
+          [this._bin, "-d", "resources"],
           this._cancellable,
         );
       } catch (e) {
@@ -872,6 +959,10 @@ const Indicator = GObject.registerClass(
       if (this._pingIntervalChangedId) {
         this._settings.disconnect(this._pingIntervalChangedId);
         this._pingIntervalChangedId = null;
+      }
+      if (this._binChangedId) {
+        this._settings.disconnect(this._binChangedId);
+        this._binChangedId = null;
       }
 
       this._cancellable.cancel();

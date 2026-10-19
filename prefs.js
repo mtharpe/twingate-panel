@@ -62,5 +62,23 @@ export default class TwingatePanelPreferences extends ExtensionPreferences {
         settings.bind('ping-interval-seconds', pingIntervalRow, 'value', Gio.SettingsBindFlags.DEFAULT);
         settings.bind('ping-enabled', pingIntervalRow, 'sensitive', Gio.SettingsBindFlags.GET);
         pingGroup.add(pingIntervalRow);
+
+        const cliGroup = new Adw.PreferencesGroup({
+            title: 'Twingate CLI',
+            description: 'Leave both empty unless the defaults don\'t work on your system.',
+        });
+        page.add(cliGroup);
+
+        const pathRow = new Adw.EntryRow({
+            title: 'CLI path (empty = find /usr/bin, /usr/local/bin or PATH)',
+        });
+        settings.bind('twingate-path', pathRow, 'text', Gio.SettingsBindFlags.DEFAULT);
+        cliGroup.add(pathRow);
+
+        const helperRow = new Adw.EntryRow({
+            title: 'Privileged helper (pkexec; connect [account] | off | add)',
+        });
+        settings.bind('privileged-helper', helperRow, 'text', Gio.SettingsBindFlags.DEFAULT);
+        cliGroup.add(helperRow);
     }
 }
